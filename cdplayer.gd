@@ -23,6 +23,8 @@ var _poll_thread: Thread = null
 var pause = load("res://pause.png")
 var play = load("res://play.png")
 
+var track_history: Array[int] = []
+
 @onready var cover_http          := $CoverHTTPRequest
 @onready var poll_timer          := $PollTimer
 @onready var album_art           := $Ui/DiscContainer/AlbumArt
@@ -99,6 +101,8 @@ func _process(delta: float) -> void:
 	var target_speed := 0.0
 	if mpv_pid != -1 and not is_paused:
 		target_speed = 45.0
+		
+	$Ui/Shuffled.visible = shuffle
 
 	disc_speed = lerpf(disc_speed, target_speed, delta * 4.0)
 
@@ -182,6 +186,7 @@ func _on_disc_check_result(disc_id: String) -> void:
 	last_disc_id = disc_id
 
 	if disc_id != "":
+		track_history.clear()
 		lookup_disc(disc_id)
 	else:
 		disc_removed.emit()
@@ -263,6 +268,7 @@ func _on_cover_http_request_completed(_result, code, headers, body) -> void:
 		if err != OK:
 			err = img.load_png_from_buffer(body)
 		if err == OK:
+			img.resize(500, 500, Image.INTERPOLATE_LANCZOS)
 			album_art.texture = ImageTexture.create_from_image(img)
 			var colors = _get_prominent_colors(img, 4)
 			_set_background_colors(colors)
@@ -296,6 +302,7 @@ func _update_current_track_label() -> void:
 	current_track_label.text = "%s. %s" % [track["number"], track["title"]]
 
 func play_track(track_index: int) -> void:
+	track_history.append(current_track)
 	_stop_mpv()
 	progress_bar.value = 0.0
 	current_track = track_index
@@ -354,14 +361,22 @@ func _on_stop_pressed() -> void:
 func _on_prev_pressed() -> void:
 	if current_album.is_empty():
 		return
-	current_track = max(0, current_track - 1)
-	play_track(current_track)
+	if shuffle and track_history.size() > 0:
+		var prev = track_history.pop_back()
+		play_track(prev)
+	else:
+		current_track = max(0, current_track - 1)
+		play_track(current_track)
 
 func _on_next_pressed() -> void:
 	if current_album.is_empty():
 		return
-	current_track = mini(current_album["tracks"].size() - 1, current_track + 1)
-	play_track(current_track)
+	if shuffle:
+		var next = randi() % current_album["tracks"].size()
+		play_track(next)
+	else:
+		current_track = mini(current_album["tracks"].size() - 1, current_track + 1)
+		play_track(current_track)
 
 func _on_track_selected(index: int) -> void:
 	current_track = index
@@ -669,13 +684,15 @@ func _load_cover_from_path(path: String) -> void:
 	var err = img.load_jpg_from_buffer(buffer)
 	if err != OK:
 		err = img.load_png_from_buffer(buffer)
-	if err == OK:
-		album_art.texture = ImageTexture.create_from_image(img)
-		var colors = _get_prominent_colors(img, 4)
-		_set_background_colors(colors)
-	else:
+	if err != OK:
 		print("Failed to decode cover image: ", path)
 		album_art.texture = NO_DISC_TEXTURE
+		return
+
+	img.resize(500, 500, Image.INTERPOLATE_LANCZOS)
+	album_art.texture = ImageTexture.create_from_image(img)
+	var colors = _get_prominent_colors(img, 4)
+	_set_background_colors(colors)
 		
 func _get_track_count() -> int:
 	var output := []

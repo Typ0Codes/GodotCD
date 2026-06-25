@@ -169,6 +169,7 @@ offset_right = 640.0
 offset_bottom = 640.0
 scale = Vector2(0.5, 0.5)
 texture = ExtResource("2_bej3j")
+expand_mode = 2
 stretch_mode = 5
 
 [node name="AlbumArt" type="TextureRect" parent="Ui/DiscContainer" unique_id=107847196]
@@ -190,6 +191,16 @@ text = "Volume
 
 "
 
+[node name="Label3" type="Label" parent="Ui" unique_id=1911958211]
+modulate = Color(1, 1, 1, 0.3254902)
+layout_mode = 0
+offset_left = 6.0
+offset_top = 617.0
+offset_right = 333.0
+offset_bottom = 648.0
+theme_override_font_sizes/font_size = 10
+text = "Made By SLDTyp0"
+
 [node name="Label2" type="Label" parent="Ui" unique_id=1507619222]
 modulate = Color(1, 1, 1, 0.3254902)
 layout_mode = 0
@@ -199,6 +210,16 @@ offset_right = 332.0
 offset_bottom = 662.0
 theme_override_font_sizes/font_size = 10
 text = "Icons By: Chanut, Freepik, Inkubators, SyrafiStudio and Pixel Perfect"
+
+[node name="Shuffled" type="TextureRect" parent="Ui" unique_id=334733707]
+visible = false
+layout_mode = 0
+offset_left = 706.99994
+offset_top = 14.0
+offset_right = 1219.0
+offset_bottom = 526.0
+scale = Vector2(0.05, 0.05)
+texture = ExtResource("2_ynh2d")
 
 [connection signal="album_found" from="." to="." method="_on_album_found"]
 [connection signal="request_completed" from="HTTPRequest" to="." method="_on_http_request_completed"]
