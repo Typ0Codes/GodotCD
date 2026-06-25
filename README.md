@@ -6,6 +6,7 @@
 
 Godot CD is a simple, Clean, CDplayer Built using Godot and Python.
 
+Godot CD was written without the usage of generative AI.
 
 
 ## Intallation
