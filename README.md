@@ -24,6 +24,10 @@ sudo pacman -S python mpv eject libcdio cdparanoia
 sudo usermod -aG cdrom $USER #after running this restart your PC
 ```
 
+If you want discord RPC then install the app with this link
+
+```https://discord.com/oauth2/authorize?client_id=1521222889448276042```
+
 
 
 
