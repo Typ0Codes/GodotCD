@@ -15,9 +15,17 @@ run/main_scene="uid://dufjpehlposew"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="uid://dwqwcpt2cwjj"
 
+[autoload]
+
+DiscordRPCLoader="*uid://ccp505u778sxu"
+
 [display]
 
 window/stretch/mode="canvas_items"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/discord-rpc-gd/plugin.cfg")
 
 [physics]
 
