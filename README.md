@@ -11,6 +11,8 @@ Godot CD was written without the usage of generative AI.
 
 ## Intallation
 
+As of current godot CD only supports linux
+
 ```bash
 #ububtu/debian 
 sudo apt install python3 mpv eject libcdio-utils cdparanoia 
@@ -47,3 +49,5 @@ In app Eject
 ## Contribution
 
 Feel free to contribute but please note this was built just for myself so the code isnt very clean or thought out or documented in like anyway. 
+
+also id love it if someone made it work on windows lmao
