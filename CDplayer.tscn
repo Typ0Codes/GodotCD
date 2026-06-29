@@ -25,8 +25,7 @@ shader_parameter/shift = 0.0
 shader_parameter/time = 0.0
 
 [sub_resource type="LabelSettings" id="LabelSettings_7otep"]
-font_size = 21
-outline_size = 1
+font_size = 23
 
 [sub_resource type="LabelSettings" id="LabelSettings_bej3j"]
 font_size = 20
