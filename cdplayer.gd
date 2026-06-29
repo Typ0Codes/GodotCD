@@ -23,7 +23,13 @@ var _poll_thread: Thread = null
 var pause = load("res://pause.png")
 var play = load("res://play.png")
 
+var _mpv_poll_timer := 0.0 
+
 var track_history: Array[int] = []
+
+var _last_known_chapter := -1
+
+var _mpv_response_buf   := ""
 
 @onready var cover_http          := $CoverHTTPRequest
 @onready var poll_timer          := $PollTimer
@@ -98,29 +104,42 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_update_background(delta)
+
+	$Ui/Shuffled.visible = shuffle
+
 	var target_speed := 0.0
 	if mpv_pid != -1 and not is_paused:
 		target_speed = 45.0
-		
-	$Ui/Shuffled.visible = shuffle
-
 	disc_speed = lerpf(disc_speed, target_speed, delta * 4.0)
-
 	if abs(disc_speed - target_speed) < 0.05:
 		disc_speed = target_speed
-
 	disc_container.rotation_degrees += disc_speed * delta
 
+	
+	_mpv_poll_timer += delta
+	if _mpv_poll_timer >= 0.5 and mpv_pid != -1:
+		_mpv_poll_timer = 0.0
+		if not OS.is_process_running(mpv_pid):
+			mpv_pid = -1
+			mpv_connected = false
+			mpv_socket = StreamPeerUDS.new()
+			_on_track_finished()
+		else:
+			_request_chapter_update()
+
+	
+	if mpv_connected:
+		_read_mpv_socket()
+
+	
 	if current_album.is_empty() or current_track >= current_album["tracks"].size():
 		return
-
 	var length_ms := int(current_album["tracks"][current_track]["length"])
 	if length_ms > 0:
-		track_time_ms += delta * 1000.0
+		if not is_paused:
+			track_time_ms += delta * 1000.0
 		progress_bar.value = clampf(track_time_ms / float(length_ms), 0.0, 1.0)
-
-		if track_time_ms >= length_ms:
-			_on_track_finished()
+	   
 
 func _exit_tree() -> void:
 	_stop_mpv()
@@ -301,31 +320,43 @@ func _update_current_track_label() -> void:
 	var track = current_album["tracks"][current_track]
 	current_track_label.text = "%s. %s" % [track["number"], track["title"]]
 
-func play_track(track_index: int) -> void:
-	track_history.append(current_track)
-	_stop_mpv()
-	progress_bar.value = 0.0
-	current_track = track_index
-
-	is_paused = false
-	track_time_ms = 0.0
-
-
-	var track_argument = "--start=#%d" % (track_index + 1)
+func _start_mpv_at_track(track_index: int) -> void:
+	if mpv_pid != -1:
+		OS.kill(mpv_pid)
+		mpv_pid = -1
+	mpv_connected = false
+	mpv_socket = StreamPeerUDS.new()
+	_mpv_response_buf = ""
 
 	mpv_pid = OS.create_process("mpv", [
 		"cdda://",
 		"--cdda-device=" + CD_DEVICE,
-		track_argument,
+		"--start=#%d" % (track_index + 1),
 		"--no-video",
 		"--no-terminal",
 		"--volume=%d" % volume,
-		"--input-ipc-server=" + MPV_SOCKET
+		"--input-ipc-server=" + MPV_SOCKET,
+		"--gapless-audio=yes"
 	])
+	_last_known_chapter = track_index
 
-	if mpv_pid == -1:
-		print("Failed to start mpv process.")
-		return
+func play_track(track_index: int) -> void:
+	track_history.append(current_track)
+	current_track = track_index
+	is_paused = false
+	track_time_ms = 0.0
+	progress_bar.value = 0.0
+
+	if mpv_pid != -1 and OS.is_process_running(mpv_pid):
+		_ensure_mpv_socket()
+		if mpv_connected:
+			
+			_send_mpv_command(["set_property", "chapter", track_index])
+			_last_known_chapter = track_index
+		else:
+			_start_mpv_at_track(track_index)
+	else:
+		_start_mpv_at_track(track_index)
 
 	_update_current_track_label()
 	track_list.select(current_track)
@@ -334,11 +365,22 @@ func _stop_mpv() -> void:
 	if mpv_pid != -1:
 		OS.kill(mpv_pid)
 		mpv_pid = -1
+	mpv_connected = false
+	mpv_socket = StreamPeerUDS.new()
+	_mpv_response_buf = ""
+	_last_known_chapter = -1
 	progress_bar.value = 0.0
 	current_track_label.text = ""
 
 func _on_volume_changed(value: float) -> void:
 	volume = int(value)
+	if mpv_pid == -1:
+		return
+
+	if not mpv_connected:
+		await get_tree().create_timer(0.3).timeout
+		if mpv_pid == -1:  
+			return
 	_send_mpv_command(["set_property", "volume", volume])
 
 func _on_play_pressed() -> void:
@@ -427,10 +469,13 @@ func _send_mpv_command(command_array: Array) -> void:
 
 func _ensure_mpv_socket() -> void:
 	if mpv_connected:
-		return
+		if mpv_socket.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+			return
+		mpv_connected = false
+		mpv_socket = StreamPeerUDS.new()
+
 	var err = mpv_socket.connect_to_host(MPV_SOCKET)
 	if err != OK:
-		print("MPV socket connect failed")
 		mpv_connected = false
 		return
 	mpv_connected = true
@@ -580,7 +625,7 @@ func _try_manual_fallback() -> void:
 		return
 	_show_manual_entry_dialog()
 
-func _show_manual_entry_dialog() -> void:
+func _show_manual_entry_dialog(prefill: Dictionary = {}) -> void:
 	var track_count = _get_track_count()
 
 	var dialog = AcceptDialog.new()
@@ -596,6 +641,7 @@ func _show_manual_entry_dialog() -> void:
 
 	var title_input = LineEdit.new()
 	title_input.placeholder_text = "Enter album title"
+	title_input.text = prefill.get("title", "")  
 	vbox.add_child(title_input)
 
 	var artist_label_node = Label.new()
@@ -604,6 +650,7 @@ func _show_manual_entry_dialog() -> void:
 
 	var artist_input = LineEdit.new()
 	artist_input.placeholder_text = "Enter artist name"
+	artist_input.text = prefill.get("artist", "") 
 	vbox.add_child(artist_input)
 
 	var cover_label = Label.new()
@@ -615,13 +662,13 @@ func _show_manual_entry_dialog() -> void:
 
 	var cover_input = LineEdit.new()
 	cover_input.placeholder_text = "/path/to/image.jpg"
+	cover_input.text = prefill.get("cover_path", "")  
 	cover_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cover_hbox.add_child(cover_input)
 
 	var browse_btn = Button.new()
 	browse_btn.text = "Browse"
 	cover_hbox.add_child(browse_btn)
-
 
 	var track_info = Label.new()
 	track_info.text = "Tracks found: %d" % track_count if track_count > 0 else "Could not detect tracks"
@@ -641,13 +688,14 @@ func _show_manual_entry_dialog() -> void:
 	dialog.popup_centered()
 
 	dialog.confirmed.connect(func():
-		var tracks := []
-		for i in range(track_count):
-			tracks.append({
-				"number": str(i + 1),
-				"title":  "Track %d" % (i + 1),
-				"length": 0
-			})
+		var tracks = prefill.get("tracks", [])
+		if tracks.is_empty():
+			for i in range(track_count):
+				tracks.append({
+					"number": str(i + 1),
+					"title":  "Track %d" % (i + 1),
+					"length": 0
+				})
 
 		var album = {
 			"title":      title_input.text if title_input.text != "" else "Unknown Album",
@@ -710,3 +758,54 @@ func _get_track_count() -> int:
 			return count
 
 	return 0
+
+
+func _on_edit_pressed() -> void:
+	_show_manual_entry_dialog(current_album)
+
+
+func _request_chapter_update() -> void:
+	_ensure_mpv_socket()
+	if not mpv_connected:
+		return
+	var payload = JSON.stringify({"command": ["get_property", "chapter"], "request_id": 1}) + "\n"
+	mpv_socket.put_data(payload.to_utf8_buffer())
+
+func _read_mpv_socket() -> void:
+	var available = mpv_socket.get_available_bytes()
+	if available <= 0:
+		return
+	var result = mpv_socket.get_data(available)
+	if result[0] != OK:
+		return
+	_mpv_response_buf += result[1].get_string_from_utf8()
+
+	while "\n" in _mpv_response_buf:
+		var newline_pos = _mpv_response_buf.find("\n")
+		var line = _mpv_response_buf.substr(0, newline_pos)
+		_mpv_response_buf = _mpv_response_buf.substr(newline_pos + 1)
+		_handle_mpv_response(line)
+
+func _handle_mpv_response(line: String) -> void:
+	var json = JSON.new()
+	if json.parse(line) != OK:
+		return
+	var data = json.get_data()
+	if not data is Dictionary:
+		return
+
+	
+	if data.get("request_id") == 1 and data.get("error") == "success":
+		var chapter = data.get("data", -1)
+		if chapter is float or chapter is int:
+			var ch = int(chapter)
+			if ch != _last_known_chapter and ch >= 0:
+				_last_known_chapter = ch
+				current_track = ch
+				track_time_ms = 0.0
+				_update_current_track_label()
+				track_list.select(current_track)
+
+
+	if data.get("event") == "chapter-change":
+		_request_chapter_update()
