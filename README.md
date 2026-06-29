@@ -2,7 +2,7 @@
 
 ## A cd player Built in godot
 
-<img width="1246" height="778" alt="Screenshot from 2026-06-04 03-19-19" src="https://github.com/user-attachments/assets/238ae2d7-a8a9-4345-af8c-3972f0d218b0" />
+<img width="1920" height="1080" alt="Screenshot from 2026-06-29 14-37-05" src="https://github.com/user-attachments/assets/ad2cec38-78ae-40a3-83f2-624e39a656d2" />
 
 Godot CD is a simple, Clean, CDplayer Built using Godot and Python.
 
@@ -36,6 +36,7 @@ If you want discord RPC then install the app with this link
 The abiltiy to define custom CDs
 
 
+<img width="1920" height="1080" alt="Screenshot from 2026-06-29 14-29-33" src="https://github.com/user-attachments/assets/efd1b64b-6caa-4101-b2ac-4f7fd1956b96" />
 
 Automatic Cd Recognition
 
@@ -47,6 +48,12 @@ Shuffling
 
 In app Eject
 
+
+Discord RPC
+
+
+
+<img width="266" height="129" alt="Screenshot from 2026-06-29 14-27-32" src="https://github.com/user-attachments/assets/642eba2d-b67a-456e-b4d4-131d135c413f" />
 
 
 
