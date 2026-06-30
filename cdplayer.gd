@@ -31,6 +31,8 @@ var _last_known_chapter := -1
 
 var _mpv_response_buf   := ""
 
+var is_loading := false
+
 @onready var cover_http          := $CoverHTTPRequest
 @onready var poll_timer          := $PollTimer
 @onready var album_art           := $Ui/DiscContainer/AlbumArt
@@ -61,9 +63,8 @@ var volume        := 80
 
 func _ready() -> void:
 	cover_http.max_redirects = 8
-	
 	_load_manual_db()
-	
+
 	await get_tree().process_frame
 
 	disc_container.pivot_offset = disc_container.size / 2.0
@@ -72,14 +73,7 @@ func _ready() -> void:
 	)
 
 	album_art.texture = NO_DISC_TEXTURE
-
-
 	_kill_dangling_mpv()
-
-
-
-
-
 
 	var vol_slider = $Ui/Volume
 	vol_slider.min_value = 0
@@ -92,15 +86,13 @@ func _ready() -> void:
 	progress_bar.value     = 0.0
 
 	current_track_label.text = ""
+	last_disc_id = "INIT"
 
 	poll_timer.timeout.connect(_check_disc)
 	poll_timer.start(1.5)
+	
 
-	await get_tree().create_timer(1.0).timeout
-	var disc_id = get_disc_id()
-	last_disc_id = disc_id
-	if disc_id != "":
-		lookup_disc(disc_id)
+
 
 func _process(delta: float) -> void:
 	_update_background(delta)
@@ -110,6 +102,8 @@ func _process(delta: float) -> void:
 	var target_speed := 0.0
 	if mpv_pid != -1 and not is_paused:
 		target_speed = 45.0
+	elif is_loading:
+		target_speed = 70
 	disc_speed = lerpf(disc_speed, target_speed, delta * 4.0)
 	if abs(disc_speed - target_speed) < 0.05:
 		disc_speed = target_speed
@@ -117,7 +111,7 @@ func _process(delta: float) -> void:
 
 	
 	_mpv_poll_timer += delta
-	if _mpv_poll_timer >= 0.5 and mpv_pid != -1:
+	if _mpv_poll_timer >= 2.0 and mpv_pid != -1:
 		_mpv_poll_timer = 0.0
 		if not OS.is_process_running(mpv_pid):
 			mpv_pid = -1
@@ -219,11 +213,13 @@ func _on_disc_check_result(disc_id: String) -> void:
 		last_disc_id = "EMPTY"
 
 func lookup_disc(disc_id: String) -> void:
+	is_loading = true
 	var url = "https://musicbrainz.org/ws/2/discid/%s?fmt=json&inc=artists+recordings" % disc_id
 	print("Looking up: ", url)
 	$HTTPRequest.request(url, HEADERS)
 
 func _on_http_request_completed(_result, code, _headers, body) -> void:
+	is_loading = false
 	if code != 200:
 		print("MusicBrainz lookup failed: ", code)
 		_try_manual_fallback()
@@ -328,6 +324,9 @@ func _start_mpv_at_track(track_index: int) -> void:
 	mpv_socket = StreamPeerUDS.new()
 	_mpv_response_buf = ""
 
+	if FileAccess.file_exists(MPV_SOCKET):
+		DirAccess.remove_absolute(MPV_SOCKET)  
+
 	mpv_pid = OS.create_process("mpv", [
 		"cdda://",
 		"--cdda-device=" + CD_DEVICE,
@@ -338,6 +337,9 @@ func _start_mpv_at_track(track_index: int) -> void:
 		"--input-ipc-server=" + MPV_SOCKET,
 		"--gapless-audio=yes"
 	])
+	
+	print("mpv started with pid: ", mpv_pid)
+	
 	_last_known_chapter = track_index
 
 func play_track(track_index: int) -> void:
@@ -396,9 +398,8 @@ func _on_stop_pressed() -> void:
 		stop_btn.icon = pause
 		return
 
-	is_paused = not is_paused
-	_send_mpv_command(["set_property", "pause", is_paused])
-	stop_btn.icon = play if is_paused else pause
+
+	_send_mpv_command(["cycle", "pause"])
 
 func _on_prev_pressed() -> void:
 	if current_album.is_empty():
@@ -463,22 +464,29 @@ func _send_mpv_command(command_array: Array) -> void:
 		return
 	_ensure_mpv_socket()
 	if not mpv_connected:
+		print("mpv command dropped, not connected: ", command_array)
 		return
 	var payload = JSON.stringify({"command": command_array}) + "\n"
 	mpv_socket.put_data(payload.to_utf8_buffer())
+	print("sent to mpv: ", payload)
 
 func _ensure_mpv_socket() -> void:
 	if mpv_connected:
-		if mpv_socket.get_status() == StreamPeerTCP.STATUS_CONNECTED:
-			return
-		mpv_connected = false
-		mpv_socket = StreamPeerUDS.new()
+		return
 
 	var err = mpv_socket.connect_to_host(MPV_SOCKET)
 	if err != OK:
 		mpv_connected = false
 		return
+
 	mpv_connected = true
+	print("mpv socket connected successfully")
+
+	for cmd in [
+		{"command": ["observe_property", 1, "chapter"], "request_id": 101},
+		{"command": ["observe_property", 2, "pause"],   "request_id": 102},
+	]:
+		mpv_socket.put_data((JSON.stringify(cmd) + "\n").to_utf8_buffer())
 
 func _get_average_image_color(img: Image) -> Color:
 	var width = img.get_width()
@@ -617,6 +625,7 @@ func _load_manual_entry(disc_id: String) -> Dictionary:
 	}
 
 func _try_manual_fallback() -> void:
+	is_loading = false
 	var saved = _load_manual_entry(last_disc_id)
 	if not saved.is_empty():
 		album_found.emit(saved)
@@ -630,10 +639,33 @@ func _show_manual_entry_dialog(prefill: Dictionary = {}) -> void:
 
 	var dialog = AcceptDialog.new()
 	dialog.title = "Album Not Found"
-	dialog.size = Vector2(400, 320)
+	dialog.size = Vector2(400, 420)
 
 	var vbox = VBoxContainer.new()
 	dialog.add_child(vbox)
+
+
+	var mb_label = Label.new()
+	mb_label.text = "MusicBrainz URL (optional):"
+	vbox.add_child(mb_label)
+
+	var mb_hbox = HBoxContainer.new()
+	vbox.add_child(mb_hbox)
+
+	var mb_input = LineEdit.new()
+	mb_input.placeholder_text = "https://musicbrainz.org/release/..."
+	mb_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mb_hbox.add_child(mb_input)
+
+	var mb_fetch_btn = Button.new()
+	mb_fetch_btn.text = "Fetch"
+	mb_hbox.add_child(mb_fetch_btn)
+
+	var mb_status = Label.new()
+	mb_status.text = ""
+	mb_status.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+	vbox.add_child(mb_status)
+
 
 	var title_label = Label.new()
 	title_label.text = "Album Title:"
@@ -641,7 +673,7 @@ func _show_manual_entry_dialog(prefill: Dictionary = {}) -> void:
 
 	var title_input = LineEdit.new()
 	title_input.placeholder_text = "Enter album title"
-	title_input.text = prefill.get("title", "")  
+	title_input.text = prefill.get("title", "")
 	vbox.add_child(title_input)
 
 	var artist_label_node = Label.new()
@@ -650,7 +682,7 @@ func _show_manual_entry_dialog(prefill: Dictionary = {}) -> void:
 
 	var artist_input = LineEdit.new()
 	artist_input.placeholder_text = "Enter artist name"
-	artist_input.text = prefill.get("artist", "") 
+	artist_input.text = prefill.get("artist", "")
 	vbox.add_child(artist_input)
 
 	var cover_label = Label.new()
@@ -662,7 +694,7 @@ func _show_manual_entry_dialog(prefill: Dictionary = {}) -> void:
 
 	var cover_input = LineEdit.new()
 	cover_input.placeholder_text = "/path/to/image.jpg"
-	cover_input.text = prefill.get("cover_path", "")  
+	cover_input.text = prefill.get("cover_path", "")
 	cover_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cover_hbox.add_child(cover_input)
 
@@ -684,11 +716,33 @@ func _show_manual_entry_dialog(prefill: Dictionary = {}) -> void:
 	browse_btn.pressed.connect(func(): file_dialog.popup_centered(Vector2(600, 400)))
 	file_dialog.file_selected.connect(func(path): cover_input.text = path)
 
+	mb_fetch_btn.pressed.connect(func():
+		mb_status.text = "Fetching..."
+		mb_fetch_btn.disabled = true
+		_fetch_mb_url(mb_input.text, func(result: Dictionary):
+			mb_fetch_btn.disabled = false
+			if result.is_empty():
+				mb_status.text = "Not found — check the URL"
+				return
+			mb_status.text = "Found!"
+			title_input.text  = result.get("title", "")
+			artist_input.text = result.get("artist", "")
+
+			dialog.set_meta("fetched_tracks", result.get("tracks", []))
+			dialog.set_meta("fetched_mbid",   result.get("mbid", ""))
+
+			var mbid = result.get("mbid", "")
+			if mbid != "":
+				fetch_cover_art(mbid)
+		)
+	)
+
 	get_tree().root.add_child(dialog)
 	dialog.popup_centered()
 
 	dialog.confirmed.connect(func():
-		var tracks = prefill.get("tracks", [])
+		
+		var tracks = dialog.get_meta("fetched_tracks") if dialog.has_meta("fetched_tracks") else prefill.get("tracks", [])
 		if tracks.is_empty():
 			for i in range(track_count):
 				tracks.append({
@@ -702,7 +756,7 @@ func _show_manual_entry_dialog(prefill: Dictionary = {}) -> void:
 			"artist":     artist_input.text if artist_input.text != "" else "Unknown",
 			"cover_path": cover_input.text,
 			"tracks":     tracks,
-			"mbid":       "",
+			"mbid":       dialog.get_meta("fetched_mbid") if dialog.has_meta("fetched_mbid") else "",
 			"date":       ""
 		}
 		_save_manual_entry(last_disc_id, album)
@@ -787,6 +841,7 @@ func _read_mpv_socket() -> void:
 		_handle_mpv_response(line)
 
 func _handle_mpv_response(line: String) -> void:
+	print("mpv said: ", line)
 	var json = JSON.new()
 	if json.parse(line) != OK:
 		return
@@ -794,18 +849,65 @@ func _handle_mpv_response(line: String) -> void:
 	if not data is Dictionary:
 		return
 
-	
-	if data.get("request_id") == 1 and data.get("error") == "success":
-		var chapter = data.get("data", -1)
-		if chapter is float or chapter is int:
-			var ch = int(chapter)
-			if ch != _last_known_chapter and ch >= 0:
-				_last_known_chapter = ch
-				current_track = ch
-				track_time_ms = 0.0
-				_update_current_track_label()
-				track_list.select(current_track)
-
+	if data.get("event") == "property-change":
+		if data.get("name") == "chapter":
+			var chapter_data = data.get("data", -1)
+			if (chapter_data is float or chapter_data is int):
+				var ch = int(chapter_data)
+				if ch != _last_known_chapter and ch >= 0:
+					_last_known_chapter = ch
+					current_track = ch
+					track_time_ms = 0.0
+					_update_current_track_label()
+					track_list.select(current_track)
+		elif data.get("name") == "pause":
+			var paused_data = data.get("data", null)
+			if paused_data is bool:
+				is_paused = paused_data
+				stop_btn.icon = play if is_paused else pause
 
 	if data.get("event") == "chapter-change":
 		_request_chapter_update()
+		
+func _fetch_mb_url(url: String, on_done: Callable) -> void:
+	var mbid = url.strip_edges().trim_suffix("/").split("/")[-1]
+	if mbid.length() != 36:
+		on_done.call({})
+		return
+
+	var api_url = "https://musicbrainz.org/ws/2/release/%s?fmt=json&inc=artists+recordings" % mbid
+	var temp_http = HTTPRequest.new()
+	add_child(temp_http)
+	temp_http.request(api_url, HEADERS)
+	temp_http.request_completed.connect(func(_res, code, _hdrs, body):
+		temp_http.queue_free()
+		if code != 200:
+			on_done.call({})
+			return
+
+		var json = JSON.new()
+		json.parse(body.get_string_from_utf8())
+		var data = json.get_data()
+
+		if not data is Dictionary:
+			on_done.call({})
+			return
+
+		var result = {
+			"title":  data.get("title", ""),
+			"artist": data["artist-credit"][0]["artist"]["name"] if data.has("artist-credit") else "",
+			"mbid":   mbid,
+			"tracks": []
+		}
+
+		var media = data.get("media", [])
+		if media.size() > 0:
+			for track in media[0].get("tracks", []):
+				result["tracks"].append({
+					"number": track.get("number", ""),
+					"title":  track.get("title", "Untitled"),
+					"length": track.get("length", 0)
+				})
+
+		on_done.call(result)
+	)
