@@ -23,7 +23,7 @@ var _poll_thread: Thread = null
 var pause = load("res://pause.png")
 var play = load("res://play.png")
 
-var _mpv_poll_timer := 0.0 
+var _mpv_poll_timer := 0.0
 
 var track_history: Array[int] = []
 
@@ -133,7 +133,37 @@ func _process(delta: float) -> void:
 		if not is_paused:
 			track_time_ms += delta * 1000.0
 		progress_bar.value = clampf(track_time_ms / float(length_ms), 0.0, 1.0)
-	   
+		
+	#i know this is bloat but let me have fun and whimsy in my life
+	
+	if album_title.text.containsn("Deltarune"):
+		$"Ui/Deltarune Easter Egg".visible = true
+		$"Ui/Deltarune Easter Egg".play("default")
+	elif $"Ui/Deltarune Easter Egg".visible:
+		$"Ui/Deltarune Easter Egg".visible = false
+		$"Ui/Deltarune Easter Egg".stop()
+		
+	if album_title.text.containsn("Oneshot"):
+		$"Ui/OneShot Easter Egg".visible = true
+	elif $"Ui/OneShot Easter Egg".visible:
+		$"Ui/OneShot Easter Egg".visible = false
+		
+	if album_title.text.containsn("Celeste"):
+		$"Ui/OneShot Easter Egg2".visible = true
+	elif $"Ui/OneShot Easter Egg2".visible:
+		$"Ui/OneShot Easter Egg2".visible = false
+	
+	if album_title.text.containsn("Hollow Knight") || album_title.text.containsn("Ultrakill") || album_title.text.containsn("Mario Galaxy") || album_title.text.containsn("Splatoon") || album_title.text.containsn("Straftat") || album_title.text.containsn("TF2") || album_title.text.containsn("Team Fortress 2"):
+		$"Ui/Game Easter Egg".visible = true
+	else:
+		$"Ui/Game Easter Egg".visible = false
+		
+	if artist_label.text.containsn("Toby Fox") || artist_label.text.containsn("C418") || artist_label.text.containsn("Kings Of Conveinence") || artist_label.text.containsn("Whitest Boy Alive") || artist_label.text.containsn("R.E.M.") || artist_label.text.containsn("Unreal Salsa") || artist_label.text.containsn("Femtanyl") || artist_label.text.containsn("David Bowie") || artist_label.text.containsn("Röyksopp") || artist_label.text.containsn("Wintergarten") || artist_label.text.containsn("Onra") || artist_label.text.containsn("Sauske Haruguchi") || artist_label.text.containsn("PinkPanthress") || artist_label.text.containsn("Jamiroquai"):
+		$"Ui/Artist Easter Egg".visible = true
+	else:
+		$"Ui/Artist Easter Egg".visible = false
+		
+	
 
 func _exit_tree() -> void:
 	_stop_mpv()
@@ -211,8 +241,14 @@ func _on_disc_check_result(disc_id: String) -> void:
 		track_list.clear()
 		album_art.texture = NO_DISC_TEXTURE
 		last_disc_id = "EMPTY"
-
 func lookup_disc(disc_id: String) -> void:
+	var saved = _load_manual_entry(disc_id)
+	if not saved.is_empty():
+		album_found.emit(saved)
+		if saved["cover_path"] != "":
+			_load_cover_from_path(saved["cover_path"])
+		return
+
 	is_loading = true
 	var url = "https://musicbrainz.org/ws/2/discid/%s?fmt=json&inc=artists+recordings" % disc_id
 	print("Looking up: ", url)
@@ -302,12 +338,7 @@ func _on_album_found(album: Dictionary) -> void:
 	artist_label.text = album["artist"]
 	current_track_label.text = ""
 
-	track_list.clear()
-	for track in album["tracks"]:
-		var secs: int = int(track["length"]) / 1000
-		var mins: int = secs / 60
-		var s: int    = secs % 60
-		track_list.add_item("%s. %s  (%d:%02d)" % [track["number"], track["title"], mins, s])
+	_refresh_track_list()
 
 func _update_current_track_label() -> void:
 	if current_album.is_empty() or current_track >= current_album["tracks"].size():
@@ -325,7 +356,7 @@ func _start_mpv_at_track(track_index: int) -> void:
 	_mpv_response_buf = ""
 
 	if FileAccess.file_exists(MPV_SOCKET):
-		DirAccess.remove_absolute(MPV_SOCKET)  
+		DirAccess.remove_absolute(MPV_SOCKET)
 
 	mpv_pid = OS.create_process("mpv", [
 		"cdda://",
@@ -381,7 +412,7 @@ func _on_volume_changed(value: float) -> void:
 
 	if not mpv_connected:
 		await get_tree().create_timer(0.3).timeout
-		if mpv_pid == -1:  
+		if mpv_pid == -1:
 			return
 	_send_mpv_command(["set_property", "volume", volume])
 
@@ -911,3 +942,64 @@ func _fetch_mb_url(url: String, on_done: Callable) -> void:
 
 		on_done.call(result)
 	)
+
+func _on_item_list_item_clicked(index: int, at_position: Vector2, mouse_button_index: int) -> void:
+	if mouse_button_index != MOUSE_BUTTON_RIGHT:
+		return
+	if current_album.is_empty() or index >= current_album["tracks"].size():
+		return
+	_show_edit_track_title_dialog(index)
+
+func _show_edit_track_title_dialog(index: int) -> void:
+	var track = current_album["tracks"][index]
+
+	var dialog = AcceptDialog.new()
+	dialog.title = "Edit Track Title"
+	dialog.size = Vector2(350, 120)
+
+	var vbox = VBoxContainer.new()
+	dialog.add_child(vbox)
+
+	var label = Label.new()
+	label.text = "Track %s title:" % track.get("number", str(index + 1))
+	vbox.add_child(label)
+
+	var line_edit = LineEdit.new()
+	line_edit.text = track.get("title", "")
+	vbox.add_child(line_edit)
+
+	get_tree().root.add_child(dialog)
+	dialog.popup_centered()
+	line_edit.grab_focus()
+	line_edit.select_all()
+
+	line_edit.text_submitted.connect(func(_t): dialog.get_ok_button().emit_signal("pressed"))
+
+	dialog.confirmed.connect(func():
+		var new_title = line_edit.text.strip_edges()
+		if new_title != "":
+			current_album["tracks"][index]["title"] = new_title
+			_refresh_track_list()
+			if index == current_track:
+				_update_current_track_label()
+			if last_disc_id != "" and last_disc_id not in ["EMPTY", "INIT"]:
+				_save_manual_entry(last_disc_id, current_album)
+		dialog.queue_free()
+	)
+
+	dialog.canceled.connect(func():
+		dialog.queue_free()
+	)
+	
+func _refresh_track_list() -> void:
+	track_list.clear()
+	for track in current_album["tracks"]:
+		var secs: int = int(track["length"]) / 1000
+		var mins: int = secs / 60
+		var s: int    = secs % 60
+		track_list.add_item("%s. %s  (%d:%02d)" % [track["number"], track["title"], mins, s])
+	track_list.select(current_track)
+	
+	
+	
+#i rlly should simplify some of this code its getting kinda messy but idc
