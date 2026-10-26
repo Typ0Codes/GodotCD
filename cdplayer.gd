@@ -6,6 +6,11 @@ signal disc_removed
 const CD_DEVICE = "/dev/sr0"
 const MPV_SOCKET = "/tmp/cdplayer_mpv.sock"
 
+# Slider goes past 100 so audio can be boosted above the "normal" 0-100 range.
+# mpv's softvol amplifier is told about this via --volume-max / the volume-max
+# property so values over 100 actually amplify instead of getting clamped.
+const VOLUME_MAX = 200
+
 const NO_DISC_TEXTURE = preload("res://nodisc.png")
 
 var is_paused    := false
@@ -77,7 +82,7 @@ func _ready() -> void:
 
 	var vol_slider = $Ui/Volume
 	vol_slider.min_value = 0
-	vol_slider.max_value = 100
+	vol_slider.max_value = VOLUME_MAX
 	vol_slider.value     = volume
 	vol_slider.value_changed.connect(_on_volume_changed)
 
@@ -365,6 +370,7 @@ func _start_mpv_at_track(track_index: int) -> void:
 		"--no-video",
 		"--no-terminal",
 		"--volume=%d" % volume,
+		"--volume-max=%d" % VOLUME_MAX,
 		"--input-ipc-server=" + MPV_SOCKET,
 		"--gapless-audio=yes"
 	])
@@ -512,6 +518,8 @@ func _ensure_mpv_socket() -> void:
 
 	mpv_connected = true
 	print("mpv socket connected successfully")
+
+	mpv_socket.put_data((JSON.stringify({"command": ["set_property", "volume-max", VOLUME_MAX]}) + "\n").to_utf8_buffer())
 
 	for cmd in [
 		{"command": ["observe_property", 1, "chapter"], "request_id": 101},

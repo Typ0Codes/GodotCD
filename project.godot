@@ -27,12 +27,15 @@ window/stretch/mode="canvas_items"
 
 enabled=PackedStringArray("res://addons/discord-rpc-gd/plugin.cfg")
 
+[input_devices]
+
+joypads/ignore_joypad_on_unfocused_application=true
+
 [physics]
 
 3d/physics_engine="Jolt Physics"
 
 [rendering]
 
-rendering_device/driver.windows="d3d12"
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
